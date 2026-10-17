@@ -1,4 +1,4 @@
-name: Publish Docker image to ECR
+name: Publish Docker image to ECR and Docker Hub
 
 on:
   push:
@@ -6,20 +6,51 @@ on:
       - main
 
 jobs:
-  push_to_registry:
-    name: Push Docker image to ECR
+  build_and_push:
+    name: Build & Push Images
     runs-on: ubuntu-latest
-    steps:
-      - name: Check out the repo
-        uses: actions/checkout@v3
 
-      - name: Build and push Docker image
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Log in to AWS ECR
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Images
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: dockerhub-test
+          DOCKERHUB_REPO: ${{ secrets.DOCKERHUB_USERNAME }}/dockerhub-test
         run: |
-          aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin 244530008913.dkr.ecr.eu-west-1.amazonaws.com
-          rev=$(git rev-parse --short HEAD)
-          docker build . -t test
-          docker tag test 244530008913.dkr.ecr.eu-west-1.amazonaws.com/dockerhub-test:$rev
-          docker push 244530008913.dkr.ecr.eu-west-1.amazonaws.com/dockerhub-test:$rev
+          # Hent kort commit-hash
+          REV=$(git rev-parse --short HEAD)
+
+          # Bygg imaget én gang
+          docker build -t spring-app:latest .
+
+          # Tag og push til AWS ECR (både commit-hash og latest)
+          docker tag spring-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:$REV
+          docker tag spring-app:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$REV
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+          # Tag og push til Docker Hub (både commit-hash og latest)
+          docker tag spring-app:latest $DOCKERHUB_REPO:$REV
+          docker tag spring-app:latest $DOCKERHUB_REPO:latest
+          docker push $DOCKERHUB_REPO:$REV
+          docker push $DOCKERHUB_REPO:latest
